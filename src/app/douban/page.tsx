@@ -6,8 +6,8 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { getDoubanCategories } from '@/lib/douban.client';
-import { DoubanItem } from '@/lib/types';
+import { getDoubanCategories, getDoubanList } from '@/lib/douban.client';
+import { DoubanItem, DoubanResult } from '@/lib/types';
 
 import DoubanCardSkeleton from '@/components/DoubanCardSkeleton';
 import DoubanSelector from '@/components/DoubanSelector';
@@ -27,6 +27,9 @@ function DoubanPageClient() {
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const type = searchParams.get('type') || 'movie';
+  const tag = searchParams.get('tag') || '';
+  const custom = searchParams.get('custom') === 'true';
+  const name = searchParams.get('name') || '';
 
   // 选择器状态 - 完全独立，不依赖URL参数
   const [primarySelection, setPrimarySelection] = useState<string>(() => {
@@ -53,7 +56,7 @@ function DoubanPageClient() {
   useEffect(() => {
     setSelectorsReady(false);
     setLoading(true); // 立即显示loading状态
-  }, [type]);
+  }, [type, tag]);
 
   // 当type变化时重置选择器状态
   useEffect(() => {
@@ -78,7 +81,7 @@ function DoubanPageClient() {
     }, 50);
 
     return () => clearTimeout(timer);
-  }, [type]);
+  }, [type, tag, custom]);
 
   // 生成骨架屏数据
   const skeletonData = Array.from({ length: 25 }, (_, index) => index);
@@ -113,7 +116,17 @@ function DoubanPageClient() {
   const loadInitialData = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await getDoubanCategories(getRequestParams(0));
+      let data: DoubanResult;
+      if (custom) {
+        data = await getDoubanList({
+          tag,
+          type,
+          pageLimit: 25,
+          pageStart: 0,
+        });
+      } else {
+        data = await getDoubanCategories(getRequestParams(0));
+      }
 
       if (data.code === 200) {
         setDoubanData(data.list);
@@ -125,12 +138,19 @@ function DoubanPageClient() {
     } catch (err) {
       console.error(err);
     }
-  }, [type, primarySelection, secondarySelection, getRequestParams]);
+  }, [
+    type,
+    tag,
+    custom,
+    primarySelection,
+    secondarySelection,
+    getRequestParams,
+  ]);
 
   // 只在选择器准备好后才加载数据
   useEffect(() => {
     // 只有在选择器准备好时才开始加载
-    if (!selectorsReady) {
+    if (!selectorsReady && !custom) {
       return;
     }
 
@@ -159,6 +179,8 @@ function DoubanPageClient() {
   }, [
     selectorsReady,
     type,
+    tag,
+    custom,
     primarySelection,
     secondarySelection,
     loadInitialData,
@@ -171,9 +193,19 @@ function DoubanPageClient() {
         try {
           setIsLoadingMore(true);
 
-          const data = await getDoubanCategories(
-            getRequestParams(currentPage * 25)
-          );
+          let data: DoubanResult;
+          if (custom) {
+            data = await getDoubanList({
+              tag,
+              type,
+              pageLimit: 25,
+              pageStart: currentPage * 25,
+            });
+          } else {
+            data = await getDoubanCategories(
+              getRequestParams(currentPage * 25)
+            );
+          }
 
           if (data.code === 200) {
             setDoubanData((prev) => [...prev, ...data.list]);
@@ -190,7 +222,7 @@ function DoubanPageClient() {
 
       fetchMoreData();
     }
-  }, [currentPage, type, primarySelection, secondarySelection]);
+  }, [currentPage, type, tag, custom, primarySelection, secondarySelection]);
 
   // 设置滚动监听
   useEffect(() => {
@@ -226,25 +258,41 @@ function DoubanPageClient() {
   // 处理选择器变化
   const handlePrimaryChange = useCallback(
     (value: string) => {
-      setLoading(true);
-      setPrimarySelection(value);
+      // 只有当值真正改变时才设置loading状态
+      if (value !== primarySelection) {
+        setLoading(true);
+        setPrimarySelection(value);
+      }
     },
-    [type]
+    [primarySelection]
   );
 
-  const handleSecondaryChange = useCallback((value: string) => {
-    setLoading(true);
-    setSecondarySelection(value);
-  }, []);
+  const handleSecondaryChange = useCallback(
+    (value: string) => {
+      // 只有当值真正改变时才设置loading状态
+      if (value !== secondarySelection) {
+        setLoading(true);
+        setSecondarySelection(value);
+      }
+    },
+    [secondarySelection]
+  );
 
   const getPageTitle = () => {
     // 根据 type 生成标题
+    if (name) {
+      return name;
+    }
+    if (custom) {
+      return tag;
+    }
     return type === 'movie' ? '电影' : type === 'tv' ? '电视剧' : '综艺';
   };
 
   const getActivePath = () => {
     const params = new URLSearchParams();
     if (type) params.set('type', type);
+    if (tag) params.set('tag', tag);
 
     const queryString = params.toString();
     const activePath = `/douban${queryString ? `?${queryString}` : ''}`;
@@ -255,34 +303,36 @@ function DoubanPageClient() {
     <PageLayout activePath={getActivePath()}>
       <div className='px-4 sm:px-10 py-4 sm:py-8 overflow-visible'>
         {/* 页面标题和选择器 */}
-        <div className='mb-8 space-y-6'>
+        <div className='mb-6 sm:mb-8 space-y-4 sm:space-y-6'>
           {/* 页面标题 */}
           <div>
-            <h1 className='text-3xl font-bold text-gray-800 mb-2 dark:text-gray-200'>
+            <h1 className='text-2xl sm:text-3xl font-bold text-gray-800 mb-1 sm:mb-2 dark:text-gray-200'>
               {getPageTitle()}
             </h1>
-            <p className='text-gray-600 dark:text-gray-400'>
+            <p className='text-sm sm:text-base text-gray-600 dark:text-gray-400'>
               来自豆瓣的精选内容
             </p>
           </div>
 
-          {/* 选择器组件 */}
-          <div className='bg-white/60 dark:bg-gray-800/40 rounded-2xl p-4 sm:p-6 border border-gray-200/30 dark:border-gray-700/30 backdrop-blur-sm'>
-            <DoubanSelector
-              type={type as 'movie' | 'tv' | 'show'}
-              primarySelection={primarySelection}
-              secondarySelection={secondarySelection}
-              onPrimaryChange={handlePrimaryChange}
-              onSecondaryChange={handleSecondaryChange}
-            />
-          </div>
+          {/* 选择器组件 - custom 模式下不显示 */}
+          {!custom && (
+            <div className='bg-white/60 dark:bg-gray-800/40 rounded-2xl p-4 sm:p-6 border border-gray-200/30 dark:border-gray-700/30 backdrop-blur-sm'>
+              <DoubanSelector
+                type={type as 'movie' | 'tv' | 'show'}
+                primarySelection={primarySelection}
+                secondarySelection={secondarySelection}
+                onPrimaryChange={handlePrimaryChange}
+                onSecondaryChange={handleSecondaryChange}
+              />
+            </div>
+          )}
         </div>
 
         {/* 内容展示区域 */}
         <div className='max-w-[95%] mx-auto mt-8 overflow-visible'>
           {/* 内容网格 */}
           <div className='grid grid-cols-3 gap-x-2 gap-y-12 px-0 sm:px-2 sm:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] sm:gap-x-8 sm:gap-y-20'>
-            {loading || !selectorsReady
+            {loading || (!selectorsReady && !custom)
               ? // 显示骨架屏
                 skeletonData.map((index) => <DoubanCardSkeleton key={index} />)
               : // 显示实际数据
@@ -294,6 +344,8 @@ function DoubanPageClient() {
                       poster={item.poster}
                       douban_id={item.id}
                       rate={item.rate}
+                      year={item.year}
+                      type={type === 'movie' ? 'movie' : ''} // 电影类型严格控制，tv 不控
                     />
                   </div>
                 ))}
